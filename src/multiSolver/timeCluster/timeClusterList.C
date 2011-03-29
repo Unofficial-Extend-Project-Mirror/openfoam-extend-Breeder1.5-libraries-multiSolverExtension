@@ -47,7 +47,7 @@ Foam::timeClusterList::timeClusterList(const Foam::label size)
 
 Foam::timeClusterList::timeClusterList(const timeCluster& tcIn)
 :
-    List<timeCluster>(tcIn)
+    List<timeCluster>(1, tcIn)
 {}
 
 
