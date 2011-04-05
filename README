@@ -28,12 +28,12 @@ Contents
 
  - The source code for the library, which should end up in:
         src/multiSolver
- - A required postprocessing application "multiPost", which should end up in:
-        applications/utilities/postProcessing/multiPost
+ - A required postprocessing application "multiSolver", which should end up in:
+        applications/utilities/postProcessing/multiSolver
  - A demo multiSolver application, which should end up in:
         applications/solvers/multiSolver/multiSolverDemo
  - A sample test case, which should end up in:
-        tutorials/multiSolverDemo
+        tutorials/multiSolver/multiSolverDemo
 
 Required OpenFOAM-Version (Known to work with)
 ==============================================
