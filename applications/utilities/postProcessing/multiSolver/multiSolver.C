@@ -23,7 +23,7 @@ License
     Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA
 
 Application
-    multiPost
+    multiSolver
 
 Description
     Post-processor utility required for working with multiSolver-enabled
@@ -70,7 +70,7 @@ void parseOptions
         else
         {
             // not word, not label, fail
-            FatalErrorIn("multiPost::parseOptions")
+            FatalErrorIn("multiSolver::parseOptions")
                 << "Expecting word or label.  Neither found at position "
                 << nSolverDomains - 1 << " in " << options
                 << abort(FatalError);
@@ -117,7 +117,7 @@ void parseOptions
                         else
                         {
                             // greater than / less than, range
-                            FatalErrorIn("multiPost::parseOptions")
+                            FatalErrorIn("multiSolver::parseOptions")
                                 << "superLoop range incorrect order.  'from : "
                                 << "to' where 'from' should be less than "
                                 << "'to'.  Values read are '" << fromValue
@@ -128,7 +128,7 @@ void parseOptions
                     else
                     {
                         // nextNext not label
-                        FatalErrorIn("multiPost::parseOptions")
+                        FatalErrorIn("multiSolver::parseOptions")
                             << "Incorrect syntax.  Expecting label after ':' "
                             << "in " << options
                             << abort(FatalError);
@@ -137,7 +137,7 @@ void parseOptions
                 else
                 {
                     // non : punctuation
-                    FatalErrorIn("multiPost::parseOptions")
+                    FatalErrorIn("multiSolver::parseOptions")
                         << "Incorrect syntax.  Expecting label, word, or ':' "
                         << "in " << options
                         << abort(FatalError);
@@ -146,7 +146,7 @@ void parseOptions
             else
             {
                 // not punctuation
-                FatalErrorIn("multiPost::parseOptions")
+                FatalErrorIn("multiSolver::parseOptions")
                     << "Incorrect syntax.  Expecting label, word, or ':' "
                     << "in " << options
                     << abort(FatalError);
@@ -155,7 +155,7 @@ void parseOptions
         else
         {
             // not label, not word
-            FatalErrorIn("multiPost::parseOptions")
+            FatalErrorIn("multiSolver::parseOptions")
                 << "Incorrect syntax.  Expecting label, word, or ':' "
                 << "in " << options
                 << abort(FatalError);
@@ -178,24 +178,42 @@ int main(int argc, char *argv[])
         "purge","<[solverDomainName] [superLoopNumber(s)]>"
     );
     argList::validOptions.insert("set","<solverDomainName>");
+    argList::validOptions.insert("preDecompose", "");
+    argList::validOptions.insert("postDecompose", "");
+    argList::validOptions.insert("preReconstruct", "");
+    argList::validOptions.insert("postReconstruct", "");
+    
     argList::validOptions.insert("global","");
     argList::validOptions.insert("local","");
+    
     // default behaviour is purge the case/[time] directory before '-load'
     // command.  '-noPurge' prevents this.  Allows for more complicated
-    // load data selections by executing multiPost several times
+    // load data selections by executing multiSolver several times
     argList::validOptions.insert("noPurge","");
+    
     // default behaviour is: if there is only one solverDomain specified, use
-    // setSolverDomain() on it.  Same as multiPost -set solverDomain.
+    // setSolverDomain() on it.  Same as multiSolver -set solverDomain.
     // '-noSet' prevents this.
     argList::validOptions.insert("noSet","");
+    
     // default behaviour is: if there are storeFields defined, when loading, it
     // will copy the store fields into every time instance where they are
-    // absent.
+    // absent.  '-noStore' will prevent this.
     argList::validOptions.insert("noStore","");
 
 #   include "setRootCase.H"
 
-    enum commandType {list, load, purge, set};
+    enum commandType
+    {
+        list,
+        load,
+        purge,
+        set,
+        preDecompose,
+        postDecompose,
+        preReconstruct,
+        postReconstruct
+    };
     commandType command;
     string options;
     bool global = false;
@@ -208,46 +226,66 @@ int main(int argc, char *argv[])
     label nCommands(0);
     
     // Read arguments
-    if (args.options().found("list"))
+    if (args.optionFound("list"))
     {
         nCommands++;
         command = list;
     }
-    if (args.options().found("load"))
+    if (args.optionFound("load"))
     {
         nCommands++;
         command = load;
         options = args.options()["load"];
     }
-    if (args.options().found("purge"))
+    if (args.optionFound("purge"))
     {
         nCommands++;
         command = purge;
         options = args.options()["purge"];
     }
-    if (args.options().found("set"))
+    if (args.optionFound("set"))
     {
         nCommands++;
         command = set;
         options = args.options()["set"];
     }
-    if (args.options().found("global"))
+    if (args.optionFound("preDecompose"))
+    {
+        nCommands++;
+        command = preDecompose;
+    }
+    if (args.optionFound("postDecompose"))
+    {
+        nCommands++;
+        command = postDecompose;
+    }
+    if (args.optionFound("preReconstruct"))
+    {
+        nCommands++;
+        command = preReconstruct;
+    }
+    if (args.optionFound("postReconstruct"))
+    {
+        nCommands++;
+        command = postReconstruct;
+    }
+    if (args.optionFound("global"))
     {
         global = true;
     }
-    if (args.options().found("local"))
+    if (args.optionFound("local"))
     {
         local = true;
     }
-    if (args.options().found("noPurge"))
+    if (args.optionFound("noPurge"))
     {
         noPurge = true;
     }
-    if (args.options().found("noSet"))
+    if (args.optionFound("noSet"))
     {
         noSet = true;
     }
-    if (args.options().found("noStore"))
+    if (args.optionFound("noStore"))
     {
         noStore = true;
     }
@@ -255,29 +293,33 @@ int main(int argc, char *argv[])
     // Error checking
     if (nCommands == 0)
     {
-        FatalErrorIn("multiPost::main")
-            << "multiPost - nothing to do.  Use 'multiPost -help' for assistance."
+        FatalErrorIn("multiSolver::main")
+            << "multiSolver - nothing to do.  Use 'multiSolver -help' for assistance."
             << abort(FatalError);
     }
     else if (nCommands > 1)
     {
-        FatalErrorIn("multiPost::main")
-            << "More than one command found.  Use only one of:\n\t-list"
+        FatalErrorIn("multiSolver::main")
+            << "More than one command found.  Use only one of:"
             << "\n\t-list"
             << "\n\t-purge"
-            << "\n\t-set\n"
+            << "\n\t-set"
+            << "\n\t-preDecompose"
+            << "\n\t-postDecompose"
+            << "\n\t-preReconstruct"
+            << "\n\t-postReconstruct\n"
             << abort(FatalError);
     }
     if (global && local)
     {
-        FatalErrorIn("multiPost::main")
+        FatalErrorIn("multiSolver::main")
             << "Options global and local both specified.  Use only one or "
             << "none."
             << abort(FatalError);
     }
     if ((command != load) && (noPurge || noSet || noStore))
     {
-        FatalErrorIn("multiPost::main")
+        FatalErrorIn("multiSolver::main")
             << "'noPurge', 'noSet' and 'noStore' can only be used with the "
             << "'-load' command."
             << abort(FatalError);
@@ -293,7 +335,14 @@ int main(int argc, char *argv[])
     const IOdictionary& mcd(multiRun.multiControlDict());
     wordList solverDomains(0);
     labelList superLoops(0);
-    if (command != list)
+    if
+    (
+        (command != list)
+     && (command != preDecompose)
+     && (command != postDecompose)
+     && (command != preReconstruct)
+     && (command != postReconstruct)
+    )
     {
         parseOptions(&solverDomains, &superLoops, options);
     }
@@ -314,54 +363,63 @@ int main(int argc, char *argv[])
     // More error checking
     if (root && ((command == load) || (command == set)))
     {
-        FatalErrorIn("multiPost::main")
+        FatalErrorIn("multiSolver::main")
             << "'root' is not a valid option with '-load' or '-set'"
             << abort(FatalError);
     }
     if (all && (command == set))
     {
-        FatalErrorIn("multiPost::main")
+        FatalErrorIn("multiSolver::main")
             << "'all' is not a valid option with '-set'"
             << abort(FatalError);
     }
     if ((command == set) && ((solverDomains.size() > 1) || superLoops.size()))
     {
-        FatalErrorIn("multiPost::main")
+        FatalErrorIn("multiSolver::main")
             << "'-set' can only have a single solverDomain name as an option."
             << abort(FatalError);
     }
     if (all && superLoops.size())
     {
-        FatalErrorIn("multiPost::main")
+        FatalErrorIn("multiSolver::main")
             << "'all' cannot be followed by superLoop numbers.  To specify "
             << "a superLoop range for all solverDomains, omit the solverDomain"
-            << " name entirely.  e.g. multiPost -load 0:4 6"
+            << " name entirely.  e.g. multiSolver -load '0:4 6'"
             << abort(FatalError);
     }
     if (root && superLoops.size())
     {
-        FatalErrorIn("multiPost::main")
+        FatalErrorIn("multiSolver::main")
             << "'root' cannot be followed by superLoop numbers.  'root' refers"
             << " to case/[time] directories.  There are no superLoops here."
             << abort(FatalError);
     }
 
     // Check for correct solverDomain names
-    if (!all && !root && (command != list))
+    if
+    (
+        !all
+     && !root
+     && (command != list)
+     && (command != preDecompose)
+     && (command != postDecompose)
+     && (command != preReconstruct)
+     && (command != postReconstruct)
+    )
     {
         forAll(solverDomains, i)
         {
             if (solverDomains[i] == "default")
             {
                 // default not permitted
-                FatalErrorIn("multiPost::main")
+                FatalErrorIn("multiSolver::main")
                     << "'default' is not a permitted solverDomain name."
                     << abort(FatalError);
             }
             if (!mcd.subDict("solverDomains").found(solverDomains[i]))
             {
                 // Incorrect solver domain name
-                FatalErrorIn("multiPost::main")
+                FatalErrorIn("multiSolver::main")
                     << "solverDomainName " << solverDomains[i] << "is not "
                     << "found."
                     << abort(FatalError);
@@ -385,7 +443,16 @@ int main(int argc, char *argv[])
         }
         tclSource.purgeEmpties();
     }
-    else if ((!superLoops.size()) && (command != set) && (command != list))
+    else if
+    (
+        !superLoops.size()
+     && (command != set)
+     && (command != list)
+     && (command != preDecompose)
+     && (command != postDecompose)
+     && (command != preReconstruct)
+     && (command != postReconstruct)
+    )
     {
         // no superLoops specified - read entire solverDomains
         forAll (solverDomains, sd)
@@ -396,7 +463,16 @@ int main(int argc, char *argv[])
             );
         }
     }
-    else if ((!root) && (command != set) && (command != list))
+    else if
+    (
+        !root
+     && (command != set)
+     && (command != list)
+     && (command != preDecompose)
+     && (command != postDecompose)
+     && (command != preReconstruct)
+     && (command != postReconstruct)
+    )
     {
         // read individual superLoops
         if (!solverDomains.size())
@@ -424,7 +500,7 @@ int main(int argc, char *argv[])
     {
         if (!tclSource.purgeEmpties())
         {
-            FatalErrorIn("multiPost::main")
+            FatalErrorIn("multiSolver::main")
                 << "No data found with specified parameters."
                 << abort(FatalError);
         }
@@ -461,7 +537,7 @@ int main(int argc, char *argv[])
             bool globalOverlap(!multiRun.nonOverlapping(tclSource, true));
             if (local && localOverlap)
             {
-                FatalErrorIn("multiPost::main")
+                FatalErrorIn("multiSolver::main")
                     << "'-local' option used for data with overlapping local "
                     << "values.  Try using a single solverDomain / superLoop, "
                     << "or leave '-local' off."
@@ -469,11 +545,11 @@ int main(int argc, char *argv[])
             }
             if (globalOverlap)
             {
-                FatalErrorIn("multiPost::main")
+                FatalErrorIn("multiSolver::main")
                     << "globalTime values are overlapping.  This should not "
                     << "happen.  Ensure you have not specified the same "
                     << "solverDomain and/or superLoop more than once.  If "
-                    << "that fails, try using 'multiPost -purge all' and "
+                    << "that fails, try using 'multiSolver -purge all' and "
                     << "rerunning the simulation.  If the problem persists, "
                     << "it is a bug."
                     << abort(FatalError);
@@ -481,8 +557,13 @@ int main(int argc, char *argv[])
 
             if (!noPurge)
             {
+                Info << "Purging existing time directories in case root"
+                    << endl;
                 multiRun.purgeTimeDirs(multiRun.multiDictRegistry().path());
             }
+            
+            Info << "Loading data from multiSolver directories to case root"
+                << endl;
             if
             (
                 !multiRun.loadTimeClusterList
@@ -503,15 +584,21 @@ int main(int argc, char *argv[])
         case purge:
             if (root)
             {
+                Info << "Purging time directories from case root" << endl;
                 multiRun.purgeTimeDirs(multiRun.multiDictRegistry().path());
             }
             else
             {
+                Info << "Purging time directories from multiSolver directories"
+                    << endl;
                 forAll(tclSource, i)
                 {
                     // do not purge 'initial' directory, even if specified
                     if (tclSource[i].superLoop() < 0) continue;
-                    fileName purgePath(multiRun.findInstancePath(tclSource[i], 0).path());
+                    fileName purgePath
+                    (
+                        multiRun.findInstancePath(tclSource[i], 0).path()
+                    );
                     rmDir(purgePath);
                 }
             }
@@ -519,6 +606,153 @@ int main(int argc, char *argv[])
         case set:
             // do nothing here
             break;
+        case preDecompose:
+        {
+            Info << "Performing preDecompose" << endl;
+            multiRun.preCondition();
+            break;
+        }
+        case postDecompose:
+        {
+            Info << "Performing postDecompose" << endl;
+
+            fileNameList dirEntries
+            (
+                readDir
+                (
+                    multiRun.multiDictRegistry().path(), fileName::DIRECTORY
+                )
+            );
+
+            forAll(dirEntries, de)
+            {
+                if (dirEntries[de](9) == "processor")
+                {
+                    Info << "Reading " << dirEntries[de] << endl;
+
+                    multiRun.postCondition
+                    (
+                        dirEntries[de]
+                    );
+                    
+                    // Copy system to processorN
+                    cp
+                    (
+                        multiRun.multiDictRegistry().path()
+                            /multiRun.multiDictRegistry().system(),
+                        multiRun.multiDictRegistry().path()/dirEntries[de]
+                    );
+                    
+                    // Copy constant/files to processorN/constant
+                    fileNameList constantContents
+                    (
+                        readDir
+                        (
+                            multiRun.multiDictRegistry().path()
+                                /multiRun.multiDictRegistry().constant(),
+                            fileName::FILE
+                        )
+                    );
+                    forAll(constantContents, cc)
+                    {
+                        cp
+                        (
+                            multiRun.multiDictRegistry().path()
+                                /multiRun.multiDictRegistry().constant()
+                                /constantContents[cc],
+                            multiRun.multiDictRegistry().path()/dirEntries[de]
+                                /multiRun.multiDictRegistry().constant()
+                        );
+                    }
+                    
+                    // Copy constant/directories to processorN/constant
+                    constantContents = readDir
+                    (
+                        multiRun.multiDictRegistry().path()
+                            /multiRun.multiDictRegistry().constant(),
+                        fileName::DIRECTORY
+                    );
+                    forAll(constantContents, cc)
+                    {
+                        // Ingore mesh directory
+                        if (constantContents[cc] == "polyMesh")
+                        {
+                            continue;
+                        }
+                        cp
+                        (
+                            multiRun.multiDictRegistry().path()
+                                /multiRun.multiDictRegistry().constant()
+                                /constantContents[cc],
+                            multiRun.multiDictRegistry().path()/dirEntries[de]
+                                /multiRun.multiDictRegistry().constant()
+                        );
+                    }
+                }
+            }
+            multiRun.purgeTimeDirs(multiRun.multiDictRegistry().path());
+            break;
+        }
+        case preReconstruct:
+        {
+            Info << "Performing preReconstruct" << endl;
+            fileNameList dirEntries
+            (
+                readDir
+                (
+                    multiRun.multiDictRegistry().path(), fileName::DIRECTORY
+                )
+            );
+
+            forAll(dirEntries, de)
+            {
+                if (dirEntries[de](9) == "processor")
+                {
+                    Info << "Reading " << dirEntries[de] << endl;
+                    multiRun.preCondition
+                    (
+                        dirEntries[de]
+                    );
+                    // Fix missing 0.00000e+00 directory if it exists
+                    mkDir
+                    (
+                        multiRun.multiDictRegistry().path()/dirEntries[de]/"0"
+                    );
+                }
+            }
+            break;
+        }
+        case postReconstruct:
+        {
+            Info << "Performing postReconstruct" << endl;
+
+            Info << "Reading preconditioned time directories" << endl;
+            multiRun.postCondition();
+
+            Info << "Purging preconditioned time directories"
+                << endl;
+            
+            // Clean up extra time directories
+            fileNameList dirEntries
+            (
+                readDir
+                (
+                    multiRun.multiDictRegistry().path(), fileName::DIRECTORY
+                )
+            );
+
+            forAll(dirEntries, de)
+            {
+                if (dirEntries[de](9) == "processor")
+                {
+                    multiRun.purgeTimeDirs
+                    (
+                        multiRun.multiDictRegistry().path()/dirEntries[de]
+                    );
+                }
+            }
+            break;
+        }
     }
 
     // Execute set command - either from an explicit '-set' or from a '-load'
@@ -534,6 +768,7 @@ int main(int argc, char *argv[])
         )
     )
     {
+        Info << "Changing to " << solverDomains[0] << " settings." << endl;
         multiRun.setSolverDomainPostProcessing(solverDomains[0]);
     }
 

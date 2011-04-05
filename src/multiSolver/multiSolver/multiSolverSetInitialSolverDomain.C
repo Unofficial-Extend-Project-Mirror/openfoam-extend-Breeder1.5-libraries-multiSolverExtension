@@ -38,7 +38,7 @@ void Foam::multiSolver::setInitialSolverDomain(const word& solverDomainName)
     }
 
     currentSolverDomain_ = solverDomainName;
-    
+
     setSolverDomainControls(currentSolverDomain_);
 
     // Purge all time directories from case directory root

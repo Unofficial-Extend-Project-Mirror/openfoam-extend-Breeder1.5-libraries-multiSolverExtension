@@ -27,6 +27,7 @@ License
 #include "multiSolver.H"
 #include "tuple2Lists.H"
 #include "OFstream.H"
+#include "Pstream.H"
 
 // * * * * * * * * * * * * * Static Member Data  * * * * * * * * * * * * * * //
 
@@ -102,6 +103,89 @@ const Foam::NamedEnum<Foam::multiSolver::stopAtControls, 7>
 // * * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * //
 
 Foam::word Foam::multiSolver::multiControlDictName("multiControlDict");
+
+
+void Foam::multiSolver::setUpParallel()
+{
+    if (Pstream::master())
+    {
+        fileNameList roots(Pstream::nProcs());
+        
+        roots[0] = multiDictRegistry_.rootPath();
+        manageLocalRoot_ = true;
+        
+        // Receive from slaves
+        for
+        (
+            int slave=Pstream::firstSlave();
+            slave<=Pstream::lastSlave();
+            slave++
+        )
+        {
+            IPstream fromSlave(Pstream::blocking, slave);
+            roots[slave] = fileName(fromSlave);
+        }
+        
+        // Distribute
+        for
+        (
+            int slave=Pstream::firstSlave();
+            slave<=Pstream::lastSlave();
+            slave++
+        )
+        {
+            OPstream toSlave(Pstream::blocking, slave);
+            if (roots[slave] != roots[slave - 1])
+            {
+                toSlave << true;
+            }
+            else
+            {
+                toSlave << false;
+            }
+        }
+    }
+    else
+    {
+        // Send to master
+        {
+            OPstream toMaster(Pstream::blocking, Pstream::masterNo());
+            toMaster << fileName(multiDictRegistry_.rootPath());
+        }
+        // Receive from master
+        {
+            IPstream fromMaster(Pstream::blocking, Pstream::masterNo());
+            manageLocalRoot_ = readBool(fromMaster);
+        }
+    }
+}
+
+
+void Foam::multiSolver::synchronizeParallel() const
+{
+    if (Pstream::master())
+    {
+        // Give go signal
+        for
+        (
+            int slave=Pstream::firstSlave();
+            slave<=Pstream::lastSlave();
+            slave++
+        )
+        {
+            OPstream toSlave(Pstream::blocking, slave);
+            toSlave << true;
+        }
+    }
+    else
+    {
+        // Recieve go signal
+        {
+            IPstream fromMaster(Pstream::blocking, Pstream::masterNo());
+            bool okayToGo(readBool(fromMaster));
+        }
+    }
+}
 
 
 Foam::word Foam::multiSolver::setLocalEndTime()
@@ -224,18 +308,18 @@ void Foam::multiSolver::checkTimeDirectories() const
                 << "multiControlDict.  These two names are prohibitted."
                 << abort(FatalError);
         }
+        fileName checkMe
+        (
+            multiDictRegistry_.path()/"multiSolver"/prefixes_[i]/"initial/0"
+        );
         if
         (
-            !exists
-            (
-                multiDictRegistry_.path()/"multiSolver"/prefixes_[i]/"initial/0"
-            )
+            !exists(checkMe)
         )
         {
             FatalErrorIn("multiSolver::checkTimeDirectories")
                 << "Initial time directory missing for solver domain ["
-                << prefixes_[i] << "].  Expecting [caseDirectory]/multiSolver/"
-                << prefixes_[i] << "/initial/0"
+                << prefixes_[i] << "].  Expecting " << checkMe
                 << abort(FatalError);
         }
     }
@@ -574,37 +658,74 @@ void Foam::multiSolver::swapBoundaryConditions
 
 void Foam::multiSolver::readAllMultiDicts()
 {
-    readMultiDictDirectory(multiDictRegistry_.systemPath());
-    readMultiDictDirectory(multiDictRegistry_.constantPath());
-
-    // Sub directories under system
-    fileNameList dirEntries
+    fileName systemPath
     (
-        readDir(multiDictRegistry_.systemPath(), fileName::DIRECTORY)
+        multiDictRegistry_.path()/multiDictRegistry_.system()
     );
-
-    forAll(dirEntries, i)
-    {
-        readMultiDictDirectory
-        (
-            multiDictRegistry_.systemPath()/dirEntries[i],
-            dirEntries[i]
-        );
-    }
-
-    // Sub directories under constant
-    dirEntries = readDir
+    fileName constantPath
     (
-        multiDictRegistry_.constantPath(),
-        fileName::DIRECTORY
+        multiDictRegistry_.path()/multiDictRegistry_.constant()
     );
-    forAll(dirEntries, i)
+    
+    label done(0);
+    while (done <= 0)
     {
-        readMultiDictDirectory
+        readMultiDictDirectory(systemPath);
+        readMultiDictDirectory(constantPath);
+
+        // Sub directories under system
+        fileNameList dirEntries
         (
-            multiDictRegistry_.systemPath()/dirEntries[i],
-            dirEntries[i]
+            readDir(systemPath, fileName::DIRECTORY)
         );
+
+        forAll(dirEntries, i)
+        {
+            readMultiDictDirectory
+            (
+                systemPath/dirEntries[i],
+                dirEntries[i]
+            );
+        }
+
+        // Sub directories under constant
+        dirEntries = readDir
+        (
+            constantPath,
+            fileName::DIRECTORY
+        );
+        
+        forAll(dirEntries, i)
+        {
+            readMultiDictDirectory
+            (
+                constantPath/dirEntries[i],
+                dirEntries[i]
+            );
+        }
+    
+        // Add local root for parallel runs and repeat
+        if (manageLocalRoot_)
+        {
+            if (done == 0)
+            {
+                systemPath =
+                    multiDictRegistry_.path().path()
+                    /multiDictRegistry_.system();
+                constantPath =
+                    multiDictRegistry_.path().path()
+                    /multiDictRegistry_.constant();
+                done = -1;
+            }
+            else
+            {
+                done = 1;
+            }
+        }
+        else
+        {
+            done = 1;
+        }
     }
 }
 
@@ -667,6 +788,125 @@ void Foam::multiSolver::readIfModified()
 }
 
 
+Foam::timeCluster Foam::multiSolver::parseConditionedFile
+(
+    const word& pcFile,
+    const instant& inst
+) const
+{
+    // solverDomain@superLoop@globalOffset@preConName
+#   ifdef FULLDEBUG
+    if (!pcFile.size())
+    {
+        FatalErrorIn("multiSolver::parseConditionedFile")
+            << "Empty preConditioned fileName."
+            << abort(FatalError);
+    }
+#   endif
+
+    // Find first @
+    string::size_type first = pcFile.find("@");
+#   ifdef FULLDEBUG
+    if (first == string::npos)
+    {
+        FatalErrorIn("multiSolver::parseConditionedFile")
+            << "Bad preConditioned fileName: " << pcFile
+            << abort(FatalError);
+    }
+#   endif
+
+    // Find second @
+    string::size_type second = pcFile(first + 1, pcFile.size() - first - 1)
+        .find("@");
+#   ifdef FULLDEBUG
+    if (second == string::npos)
+    {
+        FatalErrorIn("multiSolver::parseConditionedFile")
+            << "Bad preConditioned fileName: " << pcFile
+            << abort(FatalError);
+    }
+#   endif
+
+    // Find third @
+    string::size_type third = pcFile
+    (
+        first + second + 2,
+        pcFile.size() - first - second - 2
+    ).find("@");
+
+#   ifdef FULLDEBUG
+    if
+    (
+        third == string::npos
+     || pcFile.size() == first + second + third + 3
+    )
+    {
+        FatalErrorIn("multiSolver::parseConditionedFile")
+            << "Bad preConditioned fileName: " << pcFile
+            << abort(FatalError);
+    }
+#   endif
+
+    word solverDomain
+    (
+        pcFile(first)
+    );
+    
+    IStringStream superLoopStream(pcFile(first + 1, second));
+    token superLoopToken(superLoopStream);
+
+#   ifdef FULLDEBUG
+    if (!superLoopToken.isLabel() || !superLoopStream.eof())
+    {
+        FatalErrorIn("multiSolver::parseConditionedFile")
+            << "Bad preConditioned fileName: " << pcFile
+            << abort(FatalError);
+    }
+#   endif
+
+    label superLoop
+    (
+        superLoopToken.labelToken()
+    );
+    
+    IStringStream globalOffsetStream(pcFile(first + second + 2, third));
+    token globalOffsetToken(globalOffsetStream);
+
+#   ifdef FULLDEBUG
+    if (!globalOffsetToken.isNumber() || !globalOffsetStream.eof())
+    {
+        FatalErrorIn("multiSolver::parseConditionedFile")
+            << "Bad preConditioned fileName: " << pcFile
+            << abort(FatalError);
+    }
+#   endif
+
+    scalar globalOffset
+    (
+        globalOffsetToken.number()
+    );
+    
+    word preConName
+    (
+        pcFile
+        (
+            first + second + third + 3,
+            pcFile.size() - first - second - third - 3
+        )
+    );
+    
+    return timeCluster
+    (
+        instantList(1, inst),
+        globalOffset,
+        superLoop,
+        solverDomain,
+        preConName
+    );
+}
+
+
+
 // * * * * * * * * * * * * * * * * Constructors  * * * * * * * * * * * * * * //
 
 Foam::multiSolver::multiSolver
@@ -704,6 +944,10 @@ Foam::multiSolver::multiSolver
     ),
 #include "multiSolverInit.H"
 {
+    if (Pstream::parRun())
+    {
+        setUpParallel();
+    }
     readAllMultiDicts();
     checkTimeDirectories();
     setMultiSolverControls();
@@ -744,6 +988,10 @@ Foam::multiSolver::multiSolver
     ),
 #include "multiSolverInit.H"
 {
+    if (Pstream::parRun())
+    {
+        setUpParallel();
+    }
     readAllMultiDicts();
     checkTimeDirectories();
     setMultiSolverControls();
@@ -758,6 +1006,256 @@ Foam::multiSolver::~multiSolver()
 
 // * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
 
+void Foam::multiSolver::preCondition(const word& processor)
+{
+    fileName path(multiDictRegistry_.path());
+    if (processor.size())
+    {
+        path = path/processor;
+    }
+
+    // Remove existing time directories from root
+    purgeTimeDirs(path);
+
+    //Read all data in path/multiSolver
+    timeClusterList tclSource
+    (
+        readAllTimes(processor)
+    );
+    tclSource.purgeEmpties();
+    forAll(tclSource, tc)
+    {
+        forAll(tclSource[tc], inst)
+        {        
+            fileName sourcePath;
+            fileName destPath;
+
+            // Destination path goes to -1 for initial conditions because
+            // reconstructPar omits 0
+            if (tclSource[tc].superLoop() == -1)
+            {
+                sourcePath = path/"multiSolver"
+                    /tclSource[tc].solverDomainName()
+                    /"initial/0";
+                destPath = path/"-1";
+            }
+            else
+            {
+                sourcePath = path/"multiSolver"
+                    /tclSource[tc].solverDomainName()
+                    /name(tclSource[tc].superLoop())
+                    /tclSource[tc][inst].name();
+                destPath = path/tclSource[tc][inst].name();
+            }
+            mkDir(destPath);
+            
+            fileNameList rootFiles
+            (
+                readDir(sourcePath, fileName::FILE)
+            );
+            forAll(rootFiles, rf)
+            {
+                cp
+                (
+                    sourcePath/rootFiles[rf],
+                    destPath/tclSource[tc].solverDomainName()
+                  + "@" + name(tclSource[tc].superLoop())
+                  + "@" + name(tclSource[tc].globalOffset())
+                  + "@" + rootFiles[rf]
+                );
+            }
+            
+            fileNameList subDirs
+            (
+                readDir(sourcePath, fileName::DIRECTORY)
+            );
+            
+            forAll(subDirs, sd)
+            {
+                mkDir(destPath/subDirs[sd]);
+                
+                fileNameList subDirFiles
+                (
+                    readDir(sourcePath/subDirs[sd], fileName::FILE)
+                );
+                forAll(subDirFiles, sdf)
+                {
+                    cp
+                    (
+                        sourcePath/subDirs[sd]/subDirFiles[sdf],
+                        destPath/subDirs[sd]/tclSource[tc].solverDomainName()
+                      + "@" + name(tclSource[tc].superLoop())
+                      + "@" + subDirFiles[sdf]
+                      + "@" + name(tclSource[tc].globalOffset())
+                    );
+                } // end forAll(subDirFiles, sdf)
+            } // end forAll(subDirs, sd)
+        } // end forAll instants
+    } // end forAll timeClusters
+}
+
+
+void Foam::multiSolver::postCondition(const word& processor)
+{
+    fileName path(multiDictRegistry_.path());
+    if (processor.size())
+    {
+        path = path/processor;
+    }
+
+    timeClusterList purgeMe(readAllTimes(processor));
+    purgeMe.purgeEmpties();
+
+    // Purge these directories
+    forAll(purgeMe, i)
+    {
+        fileName purgePath
+        (
+            findInstancePath(purgeMe[i], 0).path()
+        );
+        rmDir(purgePath);
+    }
+
+    instantList times(Time::findTimes(path));
+
+    forAll(times, t)
+    {
+        // Ignore "constant" if it exists
+        if (times[t].name() == "constant")
+        {
+            continue;
+        }
+        fileName sourcePath
+        (
+            path/times[t].name()
+        );
+        
+        // If timeFormat is not general, it will miss the -1 initial directory
+        if (!exists(sourcePath))
+        {
+            if (times[t].value() == -1)
+            {
+                sourcePath = path/"-1";
+            }
+            else
+            {
+                continue;
+            }
+        }
+        
+        // Root files first
+        fileNameList rootFiles
+        (
+            readDir(sourcePath, fileName::FILE)
+        );
+        forAll(rootFiles, rf)
+        {
+            timeCluster tcSubject
+            (
+                parseConditionedFile(rootFiles[rf], times[t])
+            );
+
+            fileName destPath;
+            if (tcSubject.superLoop() == -1)
+            {
+                destPath = path/"multiSolver"
+                    /tcSubject.solverDomainName()
+                    /"initial/0";
+            }
+            else
+            {
+                destPath = path/"multiSolver"
+                    /tcSubject.solverDomainName()
+                    /name(tcSubject.superLoop())
+                    /times[t].name();
+            }
+            mkDir(destPath);
+
+            // Create multiSolverTime dictionary if it doesn't exist
+            if
+            (
+                !exists(destPath.path()/"multiSolverTime")
+             && (tcSubject.superLoop() != -1)
+            )
+            {
+                IOdictionary multiSolverTime
+                (
+                    IOobject
+                    (
+                        "multiSolverTime",
+                        multiDictRegistry_.constant(),
+                        multiDictRegistry_,
+                        IOobject::NO_READ,
+                        IOobject::AUTO_WRITE,
+                        false
+                    )
+                );
+                multiSolverTime.set("globalOffset", tcSubject.globalOffset());
+                
+                // Write multiSolverTime to the case/constant directory, then
+                // move to destination path
+                multiSolverTime.regIOobject::write();
+                mv
+                (
+                    multiDictRegistry_.constantPath()/"multiSolverTime",
+                    destPath.path()
+                );
+            }
+            cp
+            (
+                sourcePath/rootFiles[rf],
+                destPath/tcSubject.preConName()
+            );
+        } // end forAll(rootFiles, rf)
+
+        // Subdirectories now
+        fileNameList subDirs
+        (
+            readDir(sourcePath, fileName::DIRECTORY)
+        );
+        
+        forAll(subDirs, sd)
+        {
+            fileNameList subDirFiles
+            (
+                readDir(sourcePath/subDirs[sd], fileName::FILE)
+            );
+            forAll(subDirFiles, sdf)
+            {
+                timeCluster tcSubject
+                (
+                    parseConditionedFile(subDirFiles[sdf], times[t])
+                );
+                fileName destPath;
+                if (tcSubject.superLoop() == -1)
+                {
+                    destPath = sourcePath.path()/"multiSolver"
+                        /tcSubject.solverDomainName()
+                        /"initial/0"/subDirs[sd];
+                }
+                else
+                {
+                    destPath = sourcePath.path()/"multiSolver"
+                        /tcSubject.solverDomainName()
+                        /name(tcSubject.superLoop())
+                        /times[t].name()
+                        /subDirs[sd];
+                }
+                mkDir(destPath);
+                cp
+                (
+                    sourcePath/subDirs[sd]/subDirFiles[sdf],
+                    destPath/subDirs[sd]/tcSubject.preConName()
+                );
+            } // end forAll(subDirFiles, sdf)
+        } // end forAll(subDirs, sd)
+    } // end forAll(rootDirs, rd)
+
+    // Delete root time directories
+    purgeTimeDirs(path);
+}
+
+
 void Foam::multiSolver::setSolverDomain(const Foam::word& solverDomainName)
 {
     if (run())
@@ -770,6 +1268,10 @@ void Foam::multiSolver::setSolverDomain(const Foam::word& solverDomainName)
         {
             setNextSolverDomain(solverDomainName);
         }
+    }
+    if (Pstream::parRun())
+    {
+        synchronizeParallel();
     }
 }
 
@@ -792,8 +1294,7 @@ void Foam::multiSolver::setSolverDomainPostProcessing
     
     setSolverDomainControls(currentSolverDomain_);
 
-    // startTime is set to the earliest in case/[time] - paraFoam uses this to
-    // initialize.
+    // startTime is set to the earliest in case/[time]
     instantList il(multiDictRegistry_.times());
     label first(Time::findClosestTimeIndex(il,-1.0));
 

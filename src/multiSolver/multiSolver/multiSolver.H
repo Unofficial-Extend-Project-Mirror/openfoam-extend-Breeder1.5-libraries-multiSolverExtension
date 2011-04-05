@@ -96,9 +96,19 @@ class multiSolver
         // has not yet been saved (to prevent the first solverDomain from
         // saving to the *next* superLoop.
         bool noSaveSinceSuperLoopIncrement_;
+        
+        // True if this is the lowest number on a local shared drive - parallel
+        // only.
+        bool manageLocalRoot_;
 
 
     // Private member functions
+    
+        // Set manageLocalRoot_ flags on all processors (parallel only)
+        void setUpParallel();
+        
+        // Ensure all processors are synchronized (parallel only)
+        void synchronizeParallel() const;
     
         // Load initial data and controls
         // *** Located in multiSolverSetInitialSolverDomain.C ***
@@ -155,9 +165,18 @@ class multiSolver
             const word& local = word::null
         );
 
-
         // Rereads modified dictionaries and sets the controls
         void readIfModified();
+        
+        // Converts a fileName with the naming convention:
+        //      solverDomain@superLoop@globalOffset@fileName
+        // to a timeCluster
+        timeCluster parseConditionedFile
+        (
+            const word& pcFile,
+            const instant& inst
+        ) const;
+
 
 public:
 
@@ -307,7 +326,7 @@ public:
 
 
     // Destructor
-        ~multiSolver();
+        virtual ~multiSolver();
 
 
     // Member functions
@@ -370,7 +389,14 @@ public:
             inline const scalar& deltaT() const;
             
 
-        // Solver interface functions
+        // Solver (and pre/post-processor) interface functions
+
+            // Pre-condition the directory for decomposePar or reconstructPar
+            void preCondition(const word& processor = word::null);
+
+            // Post-condition the directory after decomposePar or
+            // reconstructPar
+            void postCondition(const word& processor = word::null);
 
             // Switch to another solver domain
             void setSolverDomain(const word& solverDomainName);
@@ -476,20 +502,29 @@ public:
             );
 
             // Maps the time directories in a single superLoop directory
+            // Include a processor name, and it uses the processorN directory
             timeCluster readSuperLoopTimes
             (
                 const word& solverDomain,
-                const label superLoop
+                const label superLoop,
+                const word& processor = word::null
             ) const;
             
             // Maps the time directories in a single solverDomain
+            // Include a processor name, and it uses the processorN directory
             timeClusterList readSolverDomainTimes
             (
-                const word& solverDomain
+                const word& solverDomain,
+                const word processor = word::null
             ) const;
 
             // Create a snapshot of all the multiSolver time directories
-            timeClusterList readAllTimes() const;
+            // Give it a processor name, and it searches instead in the
+            // processor directory
+            timeClusterList readAllTimes
+            (
+                const word processor = word::null
+            ) const;
 
             // Move or copy all output time directories that are catalogued by
             // a timeClusterList to case/[timeValue] format.  Returns false if

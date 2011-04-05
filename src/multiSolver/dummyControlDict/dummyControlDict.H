@@ -78,7 +78,7 @@ public:
 
 
     // Destructor
-    ~dummyControlDict();
+    virtual ~dummyControlDict();
 
 };
 

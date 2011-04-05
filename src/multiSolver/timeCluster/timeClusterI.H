@@ -72,6 +72,16 @@ inline word& timeCluster::solverDomainName()
     return solverDomainName_;
 }
 
+inline const word& timeCluster::preConName() const
+{
+    return preConName_;
+}
+
+inline word& timeCluster::preConName()
+{
+    return preConName_;
+}
+
 
 } // End namespace Foam
 

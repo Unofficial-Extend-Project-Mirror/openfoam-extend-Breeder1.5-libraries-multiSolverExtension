@@ -74,6 +74,10 @@ class timeCluster
         scalar globalOffset_;
         label superLoop_;
         word solverDomainName_;
+        
+        // PreConditioned file name - used only for pre and post conditioning
+        // a data set for parallel runs
+        word preConName_;
 
 public:
 
@@ -107,7 +111,8 @@ public:
             const instantList& times,
             const scalar globalOffset,
             const label superLoop,
-            const word& solverDomainName
+            const word& solverDomainName,
+            const word& preConName = word::null
         );
 
         //- Construct given a timeCluster and an index
@@ -147,6 +152,11 @@ public:
             inline const word& solverDomainName() const;
 
             inline word& solverDomainName();
+
+            //- Solver domain name
+            inline const word& preConName() const;
+
+            inline word& preConName();
 
         // Derived values
         

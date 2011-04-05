@@ -40,9 +40,15 @@ Required OpenFOAM-Version (Known to work with)
 1.5
 1.5-dev
 1.6
+1.6-ext
+1.7.1
 
 History
 =======
+
+ 2011-04-05: Major upgrade - now works for parallel simulations
+
+ 2011-03-29: Minor bug fix for 1.6-ext and 1.7.1
 
  2010-07-23: Initial import
 

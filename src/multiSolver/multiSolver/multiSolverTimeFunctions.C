@@ -478,18 +478,27 @@ bool Foam::multiSolver::nonOverlapping
 Foam::timeCluster Foam::multiSolver::readSuperLoopTimes
 (
     const Foam::word& solverDomain,
-    const Foam::label superLoop
+    const Foam::label superLoop,
+    const Foam::word& processor
 ) const
 {
     fileName currentPath;
+    if (processor.size())
+    {
+        currentPath = multiDictRegistry_.path()/processor;
+    }
+    else
+    {
+        currentPath = multiDictRegistry_.path();
+    }
     if (superLoop < 0)
     {
-        currentPath = multiDictRegistry_.path()/"multiSolver"/solverDomain
+        currentPath = currentPath/"multiSolver"/solverDomain
             /"initial";
     }
     else
     {
-        currentPath = multiDictRegistry_.path()/"multiSolver"/solverDomain
+        currentPath = currentPath/"multiSolver"/solverDomain
             /name(superLoop);
     }
 
@@ -534,15 +543,25 @@ Foam::timeCluster Foam::multiSolver::readSuperLoopTimes
 
 Foam::timeClusterList Foam::multiSolver::readSolverDomainTimes
 (
-    const word& solverDomain
+    const word& solverDomain,
+    const word processor
 ) const
 {
     timeClusterList tcl(0);
     label nTimeClusters(0);
     
+    fileName locale;
+    if (processor.size())
+    {
+        locale = processor/"multiSolver";
+    }
+    else
+    {
+        locale = "multiSolver";
+    }
     fileName currentPath
     (
-        multiDictRegistry_.path()/"multiSolver"/solverDomain
+        multiDictRegistry_.path()/locale/solverDomain
     );
     
     labelList superLoopList(multiSolver::findSuperLoops(currentPath));
@@ -552,7 +571,7 @@ Foam::timeClusterList Foam::multiSolver::readSolverDomainTimes
     {
         timeCluster tc
         (
-            readSuperLoopTimes(solverDomain, superLoopList[sl])
+            readSuperLoopTimes(solverDomain, superLoopList[sl], processor)
         );
 
         // If there are no time directories, ignore this superLoop
@@ -566,7 +585,10 @@ Foam::timeClusterList Foam::multiSolver::readSolverDomainTimes
 }
 
 
-Foam::timeClusterList Foam::multiSolver::readAllTimes() const
+Foam::timeClusterList Foam::multiSolver::readAllTimes
+(
+    const word processor
+) const
 {
     timeClusterList tcl(0);
 
@@ -575,7 +597,7 @@ Foam::timeClusterList Foam::multiSolver::readAllTimes() const
     {
         if (prefixes_[pf] == "default") continue;
 
-        timeClusterList tclIn(readSolverDomainTimes(prefixes_[pf]));
+        timeClusterList tclIn(readSolverDomainTimes(prefixes_[pf], processor));
         tcl.append(tclIn);
     }
     return tcl;
