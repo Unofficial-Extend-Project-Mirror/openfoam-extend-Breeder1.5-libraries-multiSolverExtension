@@ -46,6 +46,8 @@ Required OpenFOAM-Version (Known to work with)
 History
 =======
 
+ 2011-06-03: Minor bug fix - parallel decomposing no longer omits the initial directory
+
  2011-04-05: Major upgrade - now works for parallel simulations
 
  2011-03-29: Minor bug fix for 1.6-ext and 1.7.1

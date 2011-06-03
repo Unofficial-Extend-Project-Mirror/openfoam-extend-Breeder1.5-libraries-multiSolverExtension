@@ -1092,6 +1092,10 @@ void Foam::multiSolver::preCondition(const word& processor)
             } // end forAll(subDirs, sd)
         } // end forAll instants
     } // end forAll timeClusters
+    if (tclSource.size())
+    {
+        setSolverDomainPostProcessing(tclSource[0].solverDomainName());
+    }
 }
 
 
